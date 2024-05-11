@@ -10,17 +10,22 @@ from sklearn.linear_model import LogisticRegression
 
 
 class MultiModelClassifier:
-    def __init__(self, dataset, k_n_splits=5, k_random_state=None, is_shuffled=False, stratify=False, l_models=None,
-                 scaler=None, cible='target'):
+    def __init__(self, dataset, k_n_splits=5, k_random_state=None, stratify=False, l_models=None,
+                 scaler=None, cible='target', classes=None):
+        if classes:
+            self.neg = classes[0]
+            self.pos = classes[1]
+        else:
+            self.neg = None
+            self.pos = None
         self.df = dataset
         self.n_splits = k_n_splits
         self.random_state = k_random_state
-        self.shuffle = is_shuffled
         self.cible = cible
         if not stratify:
-            self.kfold = KFold(n_splits=self.n_splits, random_state=self.random_state, shuffle=self.shuffle)
+            self.kfold = KFold(n_splits=self.n_splits, random_state=self.random_state)
         else:
-            self.kfold = StratifiedKFold(n_splits=self.n_splits, random_state=self.random_state, shuffle=self.shuffle)
+            self.kfold = StratifiedKFold(n_splits=self.n_splits, random_state=self.random_state)
         self.splits = self.kfold.split(self.df, self.df[self.cible])
         # The column used for stratification is the target, here df['target']
         self.train_sets = []
@@ -39,6 +44,7 @@ class MultiModelClassifier:
         self.dummies()
         self.separate_quali_quanti()
         self.result = dict()
+
         for key in self.models.keys():
             list_score = []
             self.result[key] = dict()
@@ -51,16 +57,23 @@ class MultiModelClassifier:
                 res = self.evaluate(self.pred, self.act)
                 list_score.append(res)
                 self.result[key][sub]['accuracy'] = res[0]
-                self.result[key][sub]['precision'] = res[1]
-                self.result[key][sub]['recall'] = res[2]
-                self.result[key][sub]['f1'] = res[3]
+                if self.pos and self.neg:
+                    self.result[key][sub]['precision'] = res[1]
+                    self.result[key][sub]['recall'] = res[2]
+                    self.result[key][sub]['f1'] = res[3]
             array_score = np.array(list_score)
-            self.result[key]['overall'] = {
-                'accuracy': np.round(array_score.mean(axis=0)[0], 3),
-                'precision': np.round(array_score.mean(axis=0)[1], 3),
-                'recall': np.round(array_score.mean(axis=0)[2], 3),
-                'f1': np.round(array_score.mean(axis=0)[3], 3),
-            }
+            if self.pos and self.neg:
+                self.result[key]['overall'] = {
+                    'accuracy': np.round(array_score.mean(axis=0)[0], 3),
+                    'precision': np.round(array_score.mean(axis=0)[1], 3),
+                    'recall': np.round(array_score.mean(axis=0)[2], 3),
+                    'f1': np.round(array_score.mean(axis=0)[3], 3),
+                }
+            else:
+                self.result[key]['overall'] = {
+                    'accuracy': np.round(array_score.mean(axis=0)[0], 3)
+                }
+
 
     def check_splits(self):
         for n, (train_index, test_index) in enumerate(self.splits):
@@ -95,21 +108,38 @@ class MultiModelClassifier:
         return model.predict(x)
 
     def evaluate(self, act, pred):
+        act = act.rename("actual")
+        pred = pred.rename("pred")
         concat = pd.concat([act, pred], axis=1)
         concat['same'] = concat['actual'] == concat['pred']
-        TP = concat[(concat['actual'] == 'sick') & (concat['pred'] == 'sick')].shape[0]
-        TN = concat[(concat['actual'] == 'safe') & (concat['pred'] == 'safe')].shape[0]
-        FP = concat[(concat['actual'] == 'sick') & (concat['pred'] == 'safe')].shape[0]
-        FN = concat[(concat['actual'] == 'safe') & (concat['pred'] == 'sick')].shape[0]
-        acc = np.round(concat['same'].sum() / len(concat), 2)
-        precision = np.round(TP / (TP + FP), 2)
-        recall = np.round(TP / (TP + FN), 2)
-        f1 = np.round((2 * precision * recall) / (precision + recall), 2)
-        return acc, precision, recall, f1
+        if self.pos and self.neg:
+            TP = concat[(concat['actual'] == self.pos) & (concat['pred'] == self.pos)].shape[0]
+            TN = concat[(concat['actual'] == self.neg) & (concat['pred'] == self.neg)].shape[0]
+            FP = concat[(concat['actual'] == self.pos) & (concat['pred'] == self.neg)].shape[0]
+            FN = concat[(concat['actual'] == self.neg) & (concat['pred'] == self.pos)].shape[0]
+            acc = np.round(concat['same'].sum() / len(concat), 2)
+            precision = np.round(TP / (TP + FP), 2)
+            recall = np.round(TP / (TP + FN), 2)
+            f1 = np.round((2 * precision * recall) / (precision + recall), 2)
+            return acc, precision, recall, f1
+        else:
+            acc = np.round(concat['same'].sum() / len(concat),2)
+            return acc
+
+
 
     def display(self):
         for key, value in self.result.items():
             print(key)
             for subset, val in value.items():
                 print(f"{subset}: {val}")
+
+    def get_modes(self):
+        values = sorted(self.df[self.cible].values())
+        if values == [0, 1]:
+            self.pos = 1
+            self.neg = 0
+        elif len(values) == 2:
+            self.neg = input("Please input negative class labels:")
+            self.pos = input("Please input positive class labels")
 
